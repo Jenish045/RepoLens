@@ -1,0 +1,41 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+
+# JavaScript / Next.js
+node_modules/
+.next/
+out/
+dist/
+coverage/
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+
+# Database and derived local indexes / caches
+*.sqlite3
+*.db
+*.faiss
+faiss_indexes/
+model_cache/
+cache/
+
+# Build, editor, and OS files
+build/
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
