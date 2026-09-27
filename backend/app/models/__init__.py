@@ -1,6 +1,7 @@
 """SQLAlchemy models, imported by Alembic for metadata discovery."""
 
 from app.models.entities import (
+    AnalysisJob,
     AnalysisStatus,
     Module,
     Report,
@@ -12,6 +13,7 @@ from app.models.entities import (
 )
 
 __all__ = [
+    "AnalysisJob",
     "AnalysisStatus",
     "Module",
     "Report",

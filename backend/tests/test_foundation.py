@@ -23,6 +23,7 @@ def test_specification_models_are_registered() -> None:
         "modules",
         "repository_chunks",
         "reports",
+        "analysis_jobs",
     }
 
 

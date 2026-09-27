@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     backend_url: str = "http://localhost:8000"
     api_v1_prefix: str = "/api/v1"
     environment: str = "development"
+    github_oauth_state_max_age_seconds: int = 600
+    session_jwt_ttl_minutes: int = 60
+    max_repository_files: int = 3000
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

@@ -1,6 +1,6 @@
 # RepoLens setup requirements
 
-This guide covers the project foundation only. No repository analysis or dashboard feature is implemented. Keep [RepoLens_Engineering_Specification.pdf](RepoLens_Engineering_Specification.pdf) as the normative architecture reference.
+This guide covers Capabilities 1–2 — Repository Overview and Interactive Repository Map. Semantic Explorer, Insights, Ask RepoLens, and report export are later capabilities. Keep [RepoLens_Engineering_Specification.pdf](RepoLens_Engineering_Specification.pdf) as the normative architecture reference.
 
 ## A. Required software
 
@@ -16,8 +16,7 @@ This guide covers the project foundation only. No repository analysis or dashboa
 
 ## B. Required accounts
 
-- GitHub account, for the eventual public-repository OAuth flow.
-- GitHub OAuth application owned/configured by the project team.
+- GitHub account and OAuth application owned/configured by the project team.
 - Google AI Studio / Gemini API access for the eventual Gemini integration.
 - Neon account and PostgreSQL project for shared development data.
 - Deployment accounts are not needed for local work. Later targets are Vercel (frontend), Render (backend), and Neon (database).
@@ -25,10 +24,10 @@ This guide covers the project foundation only. No repository analysis or dashboa
 
 ## C. Required API keys and credentials
 
-Required before implementing their respective integrations:
+Required to run the current integration:
 
 - GitHub OAuth **Client ID** and **Client Secret**.
-- Gemini **API key**.
+- Gemini **API key** (later capability only; not needed now).
 - Neon PostgreSQL **connection string**.
 - Application **JWT signing secret**, generated locally for development and securely generated in each deployed environment.
 
@@ -41,11 +40,11 @@ The authoritative placeholders live in `backend/.env.example` and `frontend/.env
 | Variable | Location | Purpose | Needed now? |
 |---|---|---|---|
 | `DATABASE_URL` | Backend | SQLAlchemy PostgreSQL connection string, e.g. `postgresql+psycopg://<user>:<password>@<host>/<database>?sslmode=require` | For migrations/database access |
-| `GITHUB_CLIENT_ID` | Backend | OAuth application client ID | Later, for OAuth |
-| `GITHUB_CLIENT_SECRET` | Backend | OAuth application secret (server-side only) | Later, for OAuth |
-| `GITHUB_CALLBACK_URL` | Backend | Registered OAuth callback URL | Later, for OAuth |
-| `GEMINI_API_KEY` | Backend | Gemini API credential | Later, for generative features |
-| `JWT_SECRET` | Backend | Signs application session JWTs | Later, for authentication |
+| `GITHUB_CLIENT_ID` | Backend | OAuth application client ID | Yes, for live sign-in |
+| `GITHUB_CLIENT_SECRET` | Backend | OAuth application secret (server-side only) | Yes, for live sign-in |
+| `GITHUB_CALLBACK_URL` | Backend | Registered OAuth callback URL | Yes; local default is provided |
+| `GEMINI_API_KEY` | Backend | Gemini API credential | No; not used in Capability 1 |
+| `JWT_SECRET` | Backend | Signs sessions and derives GitHub token encryption key | Yes |
 | `FRONTEND_URL` | Backend | Frontend origin used by backend configuration | Local CORS/configuration |
 | `BACKEND_URL` | Backend | Backend's externally reachable base URL | Local callback/link configuration |
 | `NEXT_PUBLIC_API_URL` | Frontend | Browser-visible base URL for the API | Frontend API client |
@@ -71,23 +70,25 @@ The foundation can import and start the backend without connecting to PostgreSQL
 3. Run migrations from `backend/` with its virtual environment active: `alembic upgrade head`.
 4. For schema changes, generate/review migrations before applying them. PostgreSQL is the durable system of record. Future FAISS indexes are derived, disposable, and reconstructed from the stored 384-dimensional normalized vectors.
 
-The initial schema has `users`, `repositories`, `repository_intelligence`, `modules`, `repository_chunks`, and `reports`. It follows the specification's UUID identities, numeric unique `github_id`, commit SHA cache key, JSONB metadata, report/status enums, and cascading repository-child relationships.
+The schema has `users`, `repositories`, `repository_intelligence`, `modules`, `repository_chunks`, and `reports`. Alembic migrations add OAuth credentials, Overview metadata, durable analysis status, module metadata, the module-analysis SHA marker, and saved Dagre positions. Module membership and inter-module relationships are stored as metadata; source files are not copied into PostgreSQL.
 
 ## G. GitHub OAuth setup
 
-OAuth is not implemented yet. When implementing it:
+The application implements the GitHub OAuth flow:
 
 1. Register a GitHub OAuth application in the project owner's GitHub account.
 2. Set its homepage to the selected frontend URL and its callback to the exact `GITHUB_CALLBACK_URL`.
-3. Store its Client ID and Client Secret in backend environment configuration only.
-4. The specification requires read-only `read:user` and `public_repo` access. Do not request private repository permissions in v1.
-5. Keep the GitHub access token on the server; the browser is intended to receive a signed application JWT. User identity must use numeric `github_id`, not username.
+3. Store its Client ID and Client Secret in backend `.env` only.
+4. The flow requests `read:user` and `public_repo`; it does not request private repository scope. RepoLens itself only makes read API calls.
+5. The GitHub access token is encrypted server-side; the browser receives only a signed short-lived application JWT. User identity uses numeric `github_id`.
+
+**OAuth scope limitation:** GitHub documents `public_repo` as allowing read/write access to public repository code and related resources. The application does not perform writes, but the token's authorization is broader than read-only. GitHub Apps have granular read-only contents permissions if stricter token-level least privilege is required later.
 
 Local callback example (replace if the route/port changes): `http://localhost:8000/api/v1/auth/callback`.
 
 ## H. Gemini setup
 
-Gemini 2.5 Flash is the specified hosted model for future grounded intelligence and answers. Obtain an API key through the team's Google AI Studio / Gemini setup and set `GEMINI_API_KEY` in `backend/.env`. Do not put it in frontend configuration. No Gemini calls occur in this project foundation.
+Gemini 2.5 Flash is specified for future grounded intelligence and answers. Capability 1 does not call Gemini; no key is needed to run this flow. If configured later, keep it in backend `.env` only.
 
 ## I. Frontend setup
 
@@ -98,7 +99,7 @@ npm install
 npm run dev
 ```
 
-Set `NEXT_PUBLIC_API_URL` to `http://localhost:8000` for local use. Available foundation checks: `npm run typecheck`, `npm run lint`, and `npm run build`. React Flow and Dagre are dependencies for later graph implementation; no repository graph is currently rendered.
+Set `NEXT_PUBLIC_API_URL` to `http://localhost:8000` for local use. Checks are `npm run typecheck`, `npm run lint`, and `npm run build`. React Flow renders module nodes and Dagre positions are computed and persisted by the backend; files appear in the selected module detail drawer, not as graph nodes.
 
 ## J. Backend setup
 
@@ -111,20 +112,20 @@ Copy-Item .env.example .env
 uvicorn app.main:app --reload
 ```
 
-On macOS/Linux, use `python3.12 -m venv .venv` and `source .venv/bin/activate`. The API foundation exposes `GET /health`. The package boundaries reserve one FastAPI process for API/core/database and the processing, intelligence, and report engines.
+On macOS/Linux, use `python3.12 -m venv .venv` and `source .venv/bin/activate`. The API exposes `GET /health`, OAuth, public repository listing, analysis trigger/status, and Overview endpoints. One FastAPI process handles API, database work, and analysis background tasks.
 
-The full specified stack includes Tree-sitter grammars, sentence-transformers/BGE, faiss-cpu, Gemini client support, Jinja2, and WeasyPrint. These are declared in the backend dependency set for later work and may require additional platform libraries. None are invoked by this foundation.
+Tree-sitter is used for deterministic metadata extraction. The broader project dependencies include sentence-transformers/BGE, faiss-cpu, Gemini, Jinja2, and WeasyPrint for later capabilities; those engines are not run in Capability 1. Git must be installed and available on the backend `PATH` for shallow cloning.
 
 ## K. Testing
 
-Backend foundation checks:
+Backend capability checks:
 
 ```powershell
 cd backend
 python -m pytest
 ```
 
-This suite checks FastAPI app import, `/health`, settings/configuration loading, and Alembic configuration. Frontend checks from `frontend/` are `npm run typecheck`, `npm run lint`, and `npm run build`. Database migrations require a reachable database. Future unit, integration, API contract, and end-to-end coverage is described in the engineering specification; those product tests are not part of this scaffold.
+This suite covers settings, app import, `/health`, OAuth state, supported scope, parser and technology metadata, cache behavior, deterministic module membership, graph coupling and layout, and owner-scoped map access. Frontend checks are `npm run typecheck`, `npm run lint`, and `npm run build`. The live flow requires reachable PostgreSQL and valid GitHub OAuth credentials.
 
 ## L. Future deployment requirements
 

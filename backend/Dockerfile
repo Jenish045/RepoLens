@@ -11,9 +11,11 @@ WORKDIR /app
 # production hardening profile.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libffi8 libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz0b libgdk-pixbuf-2.0-0 \
-    shared-mime-info && rm -rf /var/lib/apt/lists/*
+    shared-mime-info git nodejs npm && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml ./
+COPY package.json ./
+RUN npm install --omit=dev --no-audit --no-fund
 COPY app ./app
 COPY migrations ./migrations
 COPY alembic.ini ./

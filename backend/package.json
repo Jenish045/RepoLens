@@ -1,0 +1,7 @@
+{
+  "private": true,
+  "description": "Server-side Dagre layout dependency for RepoLens",
+  "dependencies": {
+    "@dagrejs/dagre": "1.1.8"
+  }
+}
