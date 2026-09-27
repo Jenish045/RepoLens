@@ -106,7 +106,7 @@ def test_cache_hit_returns_200_without_scheduling_work(monkeypatch):
     with Session(engine, expire_on_commit=False) as db:
         current = _current_user(db)
         repo = Repository(user_id=current.user.id, owner="sample", name="project", primary_language="Python", status=AnalysisStatus.COMPLETED, commit_sha="abc", file_count=2)
-        repo.intelligence = RepositoryIntelligence(summary=None, structural_data_json={"symbol_count": 1}, module_analysis_sha="abc")
+        repo.intelligence = RepositoryIntelligence(summary=None, structural_data_json={"symbol_count": 1, "semantic_analysis_sha": "abc", "semantic_chunk_count": 0}, module_analysis_sha="abc")
         db.add(repo)
         db.commit()
 
@@ -267,7 +267,9 @@ def test_workspace_is_removed_when_analysis_fails(monkeypatch, tmp_path):
         assert job.status == "FAILED"
         assert job.failure_code == "clone_failed"
         assert job.failure_message == "safe error"
-        assert routes.analysis_status(job_id, db, AuthenticatedUser(user=db.get(User, job.user_id), github_access_token="test-token")).status == "FAILED"
+        status = routes.analysis_status(job_id, db, AuthenticatedUser(user=db.get(User, job.user_id), github_access_token="test-token"))
+        assert status.status == "FAILED"
+        assert status.deferred_stages == ["Generating insights"]
 
 
 def test_successful_background_analysis_clears_failure_and_completes(monkeypatch):
@@ -300,8 +302,13 @@ def test_successful_background_analysis_clears_failure_and_completes(monkeypatch
             return {"modules": [], "edges": [], "file_to_module": {}}
         if function is pipeline.layout_modules:
             return {}
+        if function is pipeline.build_semantic_chunks:
+            return []
+        if function is pipeline.embed_texts:
+            return []
         raise AssertionError("unexpected worker operation")
     monkeypatch.setattr(pipeline, "_thread_call", thread_call)
+    monkeypatch.setattr(pipeline, "persist_chunks", lambda *_args, **_kwargs: 0)
     asyncio.run(pipeline.run_analysis(repo_id, job_id, "sha", "token"))
     with Session(engine) as db:
         job = db.get(AnalysisJob, job_id)

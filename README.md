@@ -2,67 +2,38 @@
 
 **Understand software systems, not just source code.**
 
-RepoLens is an AI-powered Repository Intelligence Platform intended to help developers understand unfamiliar software repositories quickly. Its architecture prioritizes deterministic source structure and evidence-grounded explanations.
+RepoLens analyzes public GitHub repositories to make their structure easier to understand. It produces a repository overview, a deterministic module map, and semantic search over persisted source chunks. It reads source as data and never executes repository code.
 
-> **Current stage: Capabilities 1–2.** GitHub sign-in, public repository selection, SHA-based analysis caching, asynchronous Tree-sitter metadata analysis, the Repository Overview, and the deterministic Interactive Repository Map are implemented. Semantic Explorer, Insights, Ask RepoLens, and report export remain out of scope.
+## Current implementation
+
+- GitHub OAuth sign-in and public repository selection.
+- Commit-SHA validation and same-commit analysis caching.
+- Asynchronous analysis with isolated, temporary shallow clones.
+- Tree-sitter parsing for Python, Java, JavaScript, and TypeScript.
+- Repository Overview with metadata, technologies, entry points, parse inventory, and structural counts.
+- Deterministic two-pass module detection and an interactive Dagre/React Flow Repository Map.
+- AST-aligned semantic chunks, CPU BGE embeddings, PostgreSQL persistence, and semantic search backed by a rebuildable in-memory FAISS index.
+
+Repository Insights, generated summaries, grounded Ask RepoLens answers, PDF/Markdown report export, and a generated learning path are not implemented in the current application. The master specification describes the target system and remains authoritative for architecture and roadmap decisions; the project-state document distinguishes those plans from shipped code.
 
 ## Architecture
 
-RepoLens is a modular monolith with one FastAPI application. Its planned internal engines are Repository Processing, Repository Intelligence, and Report. PostgreSQL (Neon) is the durable system of record; a future in-memory FAISS `IndexFlatIP` is derived and rebuildable from stored vectors. The frontend is a Next.js application.
+RepoLens is a modular monolith served by one FastAPI application. Its internal boundaries are the Repository Processing Engine, Repository Intelligence Engine, and Report Engine. The current processing and intelligence code is implemented; the Report Engine remains a reserved boundary. Next.js provides the web UI. Neon PostgreSQL is the system of record for users, repositories, analysis metadata, modules, semantic chunks, and vectors. FAISS is an in-memory derived index reconstructed from PostgreSQL.
 
-Supported analysis languages: Python, Java, JavaScript, and TypeScript. Only public repositories are supported.
+The product is public-repository-only and supports repositories up to 3,000 tracked files by default. GitHub credentials remain server-side and encrypted at rest. The backend makes read requests. The configured classic OAuth `public_repo` scope is broader than read-only at the token level; see the security note below and the project-state document.
 
-### Technology stack
+## Technology stack
 
-- Frontend: Next.js 15, React 19, TypeScript, Tailwind CSS, shadcn/ui foundation, React Flow
-- Backend: Python 3.12, FastAPI, Pydantic, SQLAlchemy, Alembic
-- Data and future analysis: Neon PostgreSQL, Tree-sitter, BAAI/bge-small-en-v1.5, sentence-transformers, FAISS, Gemini 2.5 Flash, Jinja2, WeasyPrint
-- Later deployment: Vercel, Render, and Neon
+- Frontend: Next.js 15, React 19, TypeScript, Tailwind CSS, React Flow, Dagre.
+- Backend: Python 3.12, FastAPI, Pydantic Settings, SQLAlchemy 2, Alembic, psycopg 3.
+- Analysis and retrieval: Tree-sitter grammars for four languages, sentence-transformers with `BAAI/bge-small-en-v1.5` (384 dimensions), FAISS `IndexFlatIP`.
+- Persistence and development targets: Neon PostgreSQL; Vercel/Render are planned deployment targets.
 
-## Repository layout
+See [SETUP_REQUIREMENTS.md](SETUP_REQUIREMENTS.md) for credentials and setup, [docs/architecture.md](docs/architecture.md) for the architecture summary, and [docs/RepoLens_Project_State_and_Decisions.txt](docs/RepoLens_Project_State_and_Decisions.txt) for the detailed current state and decisions. The authoritative design reference is [RepoLens_Engineering_Specification.pdf](RepoLens_Engineering_Specification.pdf), Version 2.0 Expanded.
 
-```text
-frontend/                   Next.js application shell
-backend/
-  app/
-    api/                    Versioned API routers
-    core/                   Settings and shared primitives
-    database/               SQLAlchemy base and connection setup
-    models/                 Specification entities plus persisted analysis jobs
-    schemas/                Pydantic API schemas
-    engines/
-      processing/           Isolated clone, Tree-sitter metadata, and persisted Dagre layout
-      intelligence/         Deterministic two-pass module detection
-      reports/              Report Engine boundary
-  migrations/               Alembic environment and initial schema migration
-  tests/                    Backend foundation tests
-docs/                       Architecture and development notes
-.github/                    Reserved for future repository configuration
-```
+## Quick start
 
-## Requirements and setup
-
-See [SETUP_REQUIREMENTS.md](SETUP_REQUIREMENTS.md) for all software, accounts, credentials, environment variables, and setup steps. The authoritative design reference is [RepoLens_Engineering_Specification.pdf](RepoLens_Engineering_Specification.pdf).
-
-Copy the relevant `.env.example` files to `.env.local` in `frontend/` and `.env` in `backend/`, then fill local values. Templates contain placeholders only.
-
-### Frontend
-
-```powershell
-cd frontend
-npm install
-npm run dev
-```
-
-The local UI is served at `http://localhost:3000` by default. Frontend checks:
-
-```powershell
-npm run typecheck
-npm run lint
-npm run build
-```
-
-### Backend
+### Backend (PowerShell)
 
 ```powershell
 cd backend
@@ -70,44 +41,71 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -e ".[dev]"
 Copy-Item .env.example .env
+# Fill in DATABASE_URL, GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, and JWT_SECRET.
+alembic upgrade head
 uvicorn app.main:app --reload
 ```
 
-The API is served at `http://localhost:8000`; `GET /health` checks process liveness. Product endpoints use `/api/v1`.
+The API is available at `http://localhost:8000`; `GET /health` is a process liveness check. Versioned product routes use `/api/v1`.
 
-### Database and migrations
-
-Create a Neon PostgreSQL database and set `DATABASE_URL` to its SQLAlchemy-compatible connection string (`postgresql+psycopg://...`). With the backend environment active:
+### Frontend (PowerShell)
 
 ```powershell
-alembic upgrade head
+cd frontend
+npm install
+Copy-Item .env.example .env.local
+npm run dev
 ```
 
-Migrations create the specification entities and add encrypted OAuth credentials, repository overview metadata, structural intelligence, and durable analysis job status. Running migrations requires a reachable configured PostgreSQL database. Importing the app does not connect to the database.
+Set `NEXT_PUBLIC_API_URL=http://localhost:8000`. The local UI is served at `http://localhost:3000`.
 
-### Tests
+### Checks
 
 ```powershell
 cd backend
 python -m pytest
+
+cd ..\frontend
+npm run typecheck
+npm run lint
+npm run build
 ```
 
-Backend tests cover OAuth state, public-only/supported scope, Tree-sitter metadata, evidence-based technology detection, SHA cache hit/miss behavior, deterministic module assignment, module coupling, owner-scoped map access, and repeatable Dagre layout. Frontend typecheck/lint/build commands are listed above.
+### Migration state
 
-## Security and data handling
+Run from `backend/` with the configured database reachable:
 
-GitHub tokens are encrypted in the server-side user record and users are keyed by numeric GitHub ID. RepoLens only makes read requests and never changes repositories. Repository clones are temporary, only tracked metadata is persisted, and repository code is never executed. See `SETUP_REQUIREMENTS.md` for local OAuth setup.
+```powershell
+alembic current
+alembic heads
+alembic upgrade head
+```
 
-## Repository analysis and map
+The intended chain has one head, `0004_semantic_chunks`. Migrations are additive schema changes; do not reset or recreate the database.
 
-1. Create a GitHub OAuth App with homepage `http://localhost:3000` and callback `http://localhost:8000/api/v1/auth/callback`.
-2. Copy `.env.example` to `backend/.env`, set `DATABASE_URL`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, and a long random `JWT_SECRET`. OAuth requests `read:user public_repo`.
-3. Apply the schema with `alembic upgrade head`, then start the backend and frontend.
-4. Sign in from `http://localhost:3000`; RepoLens returns a short-lived application JWT in the browser URL fragment, while the GitHub token remains encrypted on the server.
-5. Select a public repository. RepoLens checks its current default-branch commit SHA. A completed matching SHA with module data returns cached intelligence; older same-SHA Overview records are upgraded without repeating parsing.
-6. The task shallow-clones into a `repolens_` temporary directory, parses supported source files and recognized manifests without executing code, deterministically groups modules from directory topology and import cohesion, lays out the module graph on the server with Dagre, persists bounded metadata, and removes the temporary workspace.
-7. View Overview data at `GET /api/v1/intelligence/{repo_id}` and the owner-scoped module graph at `GET /api/v1/map/{repo_id}`. Repository Map nodes are logical modules and directed edges aggregate inter-module imports. React Flow renders the saved server positions and opens a module detail drawer; individual files are listed only inside that drawer.
+## Analysis flow
 
-Local OAuth requires valid GitHub OAuth settings and a reachable PostgreSQL database. Without those credentials, `/auth/github` redirects back to the landing page with a clear configuration message. Analysis supports up to 3,000 tracked files by default. Semantic Explorer, generated insights, Q&A, and report export are not implemented in this release.
+1. The user signs in with GitHub; the browser receives a short-lived RepoLens JWT while the GitHub token stays encrypted server-side.
+2. RepoLens lists public repositories and resolves the current commit SHA.
+3. If stored Overview, module, and semantic data match that SHA, the cached result is served. Otherwise a background analysis is queued.
+4. The backend shallow-clones the commit into a temporary workspace, verifies `HEAD`, enumerates tracked files, detects technologies, parses supported source, and extracts metadata.
+5. Deterministic module detection assigns files using directory topology and import cohesion; Dagre positions are persisted for the React Flow map.
+6. Semantic chunks retain file/line/commit provenance; normalized BGE vectors are stored in PostgreSQL and loaded into a bounded FAISS index for retrieval.
+7. The temporary workspace is removed on success and failure.
 
-**Permission note:** GitHub's required OAuth `public_repo` scope can grant read/write access to public repositories. RepoLens itself only performs read requests, but this scope is broader than read-only at the token level. GitHub Apps support granular repository permissions if the project later changes its authentication contract.
+## API surfaces currently present
+
+- `GET /api/v1/auth/github` and `GET /api/v1/auth/callback`: GitHub sign-in.
+- `GET /api/v1/repositories`: authenticated user's public repositories.
+- `GET /api/v1/repositories/analyzed`: completed repositories for semantic search.
+- `POST /api/v1/analysis/trigger`, `GET /api/v1/analysis/{id}/status`: analysis trigger and progress.
+- `GET /api/v1/intelligence/{repo_id}`: Repository Overview data.
+- `GET /api/v1/map/{repo_id}`: owner-scoped module graph and positions.
+- `POST /api/v1/search/semantic`: owner-scoped semantic retrieval.
+- `POST /api/v1/analysis/{repo_id}/parsed-files/backfill`: verified metadata backfill for older completed records.
+
+## Security note
+
+RepoLens itself uses GitHub read endpoints and never changes repositories. The classic OAuth `public_repo` scope requested by the implementation can authorize writes to public repositories at the credential level. Do not describe that token scope as read-only. Narrowing it would require an explicit authentication-contract change (for example, changing the OAuth application model) and is not part of this polish pass.
+
+Never commit `.env` files or real credentials. `.env.example` files contain placeholders; frontend `NEXT_PUBLIC_` variables are browser-visible and must not hold secrets. Analyzed repository code is untrusted input, is only read as data, and is never executed.

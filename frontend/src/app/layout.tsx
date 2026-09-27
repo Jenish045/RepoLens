@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import type { ReactNode } from "react";
 
 import "./globals.css";
+import { SemanticShortcut } from "@/components/semantic-shortcut";
 
 export const metadata: Metadata = {
   title: "RepoLens",
@@ -11,7 +12,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
   return (
     <html lang="en">
-      <body className="min-h-screen antialiased">{children}</body>
+      <body className="min-h-screen antialiased"><SemanticShortcut />{children}</body>
     </html>
   );
 }

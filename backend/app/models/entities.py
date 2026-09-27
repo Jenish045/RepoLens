@@ -145,6 +145,11 @@ class RepositoryChunk(Base):
     start_line: Mapped[int] = mapped_column(Integer, nullable=False)
     end_line: Mapped[int] = mapped_column(Integer, nullable=False)
     embedding_vector: Mapped[list[float]] = mapped_column(VectorType, nullable=False, comment="384 L2-normalized floats")
+    commit_sha: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    module_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), ForeignKey("modules.id", ondelete="SET NULL"))
+    module_name: Mapped[str | None] = mapped_column(String(255))
+    symbol_name: Mapped[str | None] = mapped_column(String(512))
+    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     repository: Mapped[Repository] = relationship(back_populates="chunks")
 
 

@@ -19,15 +19,16 @@ from app.core.config import get_settings
 from app.core.errors import APIError
 from app.database.session import get_engine
 from app.engines.intelligence.modules import detect_modules
+from app.engines.intelligence.semantic import build_semantic_chunks, embed_texts, invalidate_index, persist_chunks, warm_index
 from app.engines.processing.dagre import layout_modules
 from app.engines.processing.languages import language_for_path
 from app.engines.processing.technologies import detect_entry_points, detect_technologies
 from app.engines.processing.treesitter import parse_repository
 from app.models import AnalysisJob, AnalysisStatus, Module, Repository, RepositoryIntelligence
 
-STAGES = {1: "CLONING_REPOSITORY", 2: "DETECTING_TECHNOLOGIES", 3: "PARSING_SOURCE_CODE", 4: "EXTRACTING_METADATA", 5: "DETECTING_MODULES", 8: "PREPARING_DASHBOARD"}
+STAGES = {1: "CLONING_REPOSITORY", 2: "DETECTING_TECHNOLOGIES", 3: "PARSING_SOURCE_CODE", 4: "EXTRACTING_METADATA", 5: "DETECTING_MODULES", 6: "BUILDING_INTELLIGENCE", 8: "PREPARING_DASHBOARD"}
 COMPLETED = ["Cloning repository", "Detecting technologies", "Parsing source code", "Extracting metadata", "Detecting modules"]
-DEFERRED = ["Building intelligence", "Generating insights"]
+DEFERRED = ["Generating insights"]
 logger = logging.getLogger(__name__)
 
 
@@ -35,10 +36,10 @@ def _safe_detail(value: str, *, token: str, settings) -> str:
     """Redact credentials before exception details or tracebacks reach structured logs."""
     for secret in (
         token,
-        settings.github_client_secret or "",
-        settings.jwt_secret or "",
-        settings.gemini_api_key or "",
-        settings.database_url or "",
+        (settings.github_client_secret if settings else "") or "",
+        (settings.jwt_secret if settings else "") or "",
+        (settings.gemini_api_key if settings else "") or "",
+        (settings.database_url if settings else "") or "",
     ):
         if secret:
             value = value.replace(secret, "[REDACTED]")
@@ -88,29 +89,38 @@ async def _thread_call(function, *args, **kwargs):
         raise
 
 
+def _run_subprocess(command: list[str], *, env: dict[str, str] | None = None, timeout: int):
+    """Run a blocking child process without relying on asyncio subprocess support."""
+    return subprocess.run(command, env=env, capture_output=True, timeout=timeout, check=False)
+
+
 async def _clone(url: str, target: Path, token: str, analysis_id: UUID, repository_id: UUID, settings) -> str:
     env = os.environ.copy()
     env.update({"GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_COUNT": "2", "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader", "GIT_CONFIG_VALUE_0": f"AUTHORIZATION: basic {__import__('base64').b64encode(('x-access-token:' + token).encode()).decode()}", "GIT_CONFIG_KEY_1": "core.hooksPath", "GIT_CONFIG_VALUE_1": str(target.parent / "disabled-hooks")})
-    process = await asyncio.create_subprocess_exec("git", "clone", "--depth", "1", "--single-branch", "--no-recurse-submodules", "--", url, str(target), env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     try:
-        _stdout, _stderr = await asyncio.wait_for(process.communicate(), timeout=180)
-    except asyncio.TimeoutError as exc:
-        process.kill()
-        await process.wait()
+        clone = await _thread_call(
+            _run_subprocess,
+            ["git", "clone", "--depth", "1", "--single-branch", "--no-recurse-submodules", "--", url, str(target)],
+            env=env,
+            timeout=180,
+        )
+    except subprocess.TimeoutExpired as exc:
         raise APIError(504, "repository_download_timeout", "Repository download took too long. Please retry.") from exc
-    except asyncio.CancelledError:
-        process.kill()
-        await process.wait()
-        raise
-    if process.returncode:
-        _log(analysis_id, repository_id, STAGES[1], "Git clone process exited with an error.", level=logging.ERROR, detail=_stderr.decode("utf-8", "replace")[:2000], token=token, settings=settings)
+    if clone.returncode:
+        _log(analysis_id, repository_id, STAGES[1], "Git clone process exited with an error.", level=logging.ERROR, detail=clone.stderr.decode("utf-8", "replace")[:2000], token=token, settings=settings)
         raise APIError(502, "repository_clone_failed", "RepoLens could not download this public repository. Please retry.")
-    proc = await asyncio.create_subprocess_exec("git", "-C", str(target), "rev-parse", "HEAD", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-    head, verify_stderr = await asyncio.wait_for(proc.communicate(), timeout=15)
-    if proc.returncode:
-        _log(analysis_id, repository_id, STAGES[1], "Git commit verification exited with an error.", level=logging.ERROR, detail=verify_stderr.decode("utf-8", "replace")[:2000], token=token, settings=settings)
+    try:
+        verification = await _thread_call(
+            _run_subprocess,
+            ["git", "-C", str(target), "rev-parse", "HEAD"],
+            timeout=15,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise APIError(504, "repository_verification_timeout", "RepoLens could not verify the repository version. Please retry.") from exc
+    if verification.returncode:
+        _log(analysis_id, repository_id, STAGES[1], "Git commit verification exited with an error.", level=logging.ERROR, detail=verification.stderr.decode("utf-8", "replace")[:2000], token=token, settings=settings)
         raise APIError(502, "repository_clone_failed", "RepoLens could not verify the repository version. Please retry.")
-    return head.decode("utf-8", "replace").strip()
+    return verification.stdout.decode("utf-8", "replace").strip()
 
 
 async def run_analysis(repository_id: UUID, job_id: UUID, commit_sha: str, token: str, module_only: bool = False) -> None:
@@ -145,6 +155,7 @@ async def run_analysis(repository_id: UUID, job_id: UUID, commit_sha: str, token
                 if intelligence is None:
                     intelligence = RepositoryIntelligence(repository_id=repo.id)
                     session.add(intelligence)
+                source_paths = [path for path in all_paths if language_for_path(path)]
                 if module_only:
                     structural = intelligence.structural_data_json or {}
                     if not isinstance(structural, dict):
@@ -155,7 +166,6 @@ async def run_analysis(repository_id: UUID, job_id: UUID, commit_sha: str, token
                     technologies = await _thread_call(detect_technologies, root, all_paths)
                     _log(job_id, repository_id, STAGES[2], "Technology detection completed.")
                     _set_stage(session, job, 3, STAGES[3], 50)
-                    source_paths = [path for path in all_paths if language_for_path(path)]
                     _log(job_id, repository_id, STAGES[3], "Parsing supported source files.")
                     structural = await _thread_call(parse_repository, root, source_paths)
                     _log(job_id, repository_id, STAGES[3], "Source parsing completed.")
@@ -201,6 +211,29 @@ async def run_analysis(repository_id: UUID, job_id: UUID, commit_sha: str, token
                     "deferred_stages": DEFERRED,
                 }
                 _log(job_id, repository_id, STAGES[5], "Deterministic modules and persisted Dagre graph positions are ready.")
+
+                # Commit Tier 1 before semantic inference. If embedding or vector storage fails,
+                # the already useful Overview and Map remain available.
+                session.commit()
+                _set_stage(session, job, 6, STAGES[6], 88)
+                _log(job_id, repository_id, STAGES[6], "Building AST-aligned semantic chunks and local BGE embeddings.")
+                semantic_modules = list(session.scalars(select(Module).where(Module.repository_id == repo.id)))
+                parsed_paths = [item["path"] for item in structural.get("parsed_files", []) if isinstance(item, dict) and isinstance(item.get("path"), str)] if isinstance(structural.get("parsed_files"), list) else []
+                document_paths = [path for path in all_paths if Path(path).suffix.casefold() in {".md", ".mdx", ".markdown", ".json", ".yaml", ".yml", ".toml"}]
+                semantic_paths = sorted(set((parsed_paths if module_only else source_paths) + document_paths))
+                drafts = await _thread_call(build_semantic_chunks, root, semantic_paths, repo.id, commit_sha, semantic_modules)
+                vectors = await _thread_call(embed_texts, [row["chunk_content"] for row in drafts])
+                inserted = persist_chunks(session, repo.id, commit_sha, drafts, vectors=vectors)
+                intelligence.structural_data_json = {
+                    **(intelligence.structural_data_json if isinstance(intelligence.structural_data_json, dict) else {}),
+                    "semantic_analysis_sha": commit_sha,
+                    "semantic_chunk_count": inserted,
+                    "completed_stages": sorted(set((intelligence.structural_data_json.get("completed_stages", []) if isinstance(intelligence.structural_data_json, dict) else []) + ["Building intelligence"])),
+                }
+                session.commit()
+                invalidate_index(repo.id)
+                warm_index(session, repo.id, commit_sha)
+                _log(job_id, repository_id, STAGES[6], "Semantic chunks and embeddings persisted.", detail=f"chunk_count={inserted}")
                 _set_stage(session, job, 8, STAGES[8], 95)
                 job.status = "COMPLETED"
                 job.failure_code = None
@@ -218,7 +251,7 @@ async def run_analysis(repository_id: UUID, job_id: UUID, commit_sha: str, token
             if current:
                 current.status, current.failure_code, current.failure_message = "FAILED", "analysis_cancelled", "Analysis stopped before it could finish. Please retry."
             if current_repo:
-                current_repo.status = AnalysisStatus.COMPLETED if module_only else AnalysisStatus.FAILED
+                current_repo.status = AnalysisStatus.COMPLETED if module_only or (current_repo.commit_sha == commit_sha and current_repo.intelligence and current_repo.intelligence.module_analysis_sha == commit_sha) else AnalysisStatus.FAILED
             session.commit()
             _log(job_id, repository_id, "CANCELLED", "Analysis was cancelled and marked FAILED.", level=logging.WARNING, exc=exc, token=token, settings=settings)
             raise
@@ -229,7 +262,7 @@ async def run_analysis(repository_id: UUID, job_id: UUID, commit_sha: str, token
             if current:
                 current.status, current.failure_code, current.failure_message = "FAILED", exc.code, exc.message
             if current_repo:
-                current_repo.status = AnalysisStatus.COMPLETED if module_only else AnalysisStatus.FAILED
+                current_repo.status = AnalysisStatus.COMPLETED if module_only or (current_repo.commit_sha == commit_sha and current_repo.intelligence and current_repo.intelligence.module_analysis_sha == commit_sha) else AnalysisStatus.FAILED
             session.commit()
             _log(job_id, repository_id, job.stage, "Analysis failed with a handled error.", level=logging.WARNING, exc=exc, token=token, settings=settings)
         except Exception as exc:
@@ -239,6 +272,6 @@ async def run_analysis(repository_id: UUID, job_id: UUID, commit_sha: str, token
             if current:
                 current.status, current.failure_code, current.failure_message = "FAILED", "analysis_failed", "Repository analysis could not be completed. Please retry."
             if current_repo:
-                current_repo.status = AnalysisStatus.COMPLETED if module_only else AnalysisStatus.FAILED
+                current_repo.status = AnalysisStatus.COMPLETED if module_only or (current_repo.commit_sha == commit_sha and current_repo.intelligence and current_repo.intelligence.module_analysis_sha == commit_sha) else AnalysisStatus.FAILED
             session.commit()
             _log(job_id, repository_id, current.stage if current else "UNKNOWN", "Analysis failed with an unexpected error.", level=logging.ERROR, exc=exc, token=token, settings=settings)

@@ -6,7 +6,7 @@ from uuid import UUID
 
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, Response
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.api.dependencies import AuthenticatedUser, get_current_user
@@ -18,7 +18,7 @@ from app.database.session import get_session
 from app.engines.processing.languages import is_supported_language_name
 from app.engines.processing.pipeline import run_analysis
 from app.engines.intelligence.modules import _structural_module_name
-from app.models import AnalysisJob, AnalysisStatus, Module, Repository, RepositoryIntelligence
+from app.models import AnalysisJob, AnalysisStatus, Module, Repository, RepositoryChunk
 from app.schemas.repositories import (
     AnalysisStatusResponse,
     AnalysisTriggerRequest,
@@ -34,7 +34,7 @@ from app.schemas.repositories import (
 router = APIRouter(tags=["repositories", "analysis"])
 NAME_PATTERN = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
 STAGE_LABELS = {0: "QUEUED", 1: "Cloning repository", 2: "Detecting technologies", 3: "Parsing source code", 4: "Extracting metadata", 5: "Detecting modules", 6: "Building intelligence", 7: "Generating insights", 8: "Preparing dashboard"}
-DEFERRED = ["Building intelligence", "Generating insights"]
+DEFERRED = ["Generating insights"]
 
 
 def _inventory_response(repo_id: UUID, commit_sha: str, rows: list[dict], modules: list[Module], *, backfilled: bool) -> ParsedFileInventoryResponse:
@@ -72,6 +72,12 @@ async def repositories(
     return RepositoryListResponse(data=[_repo_card(item) for item in items], meta={"page": page, "per_page": per_page, "has_more": more})
 
 
+@router.get("/repositories/analyzed")
+def analyzed_repositories(db: Session = Depends(get_session), current: AuthenticatedUser = Depends(get_current_user)):
+    rows = db.scalars(select(Repository).where(Repository.user_id == current.user.id, Repository.status == AnalysisStatus.COMPLETED).order_by(Repository.owner, Repository.name))
+    return [{"id": row.id, "owner": row.owner, "name": row.name, "commit_sha": row.commit_sha} for row in rows]
+
+
 @router.post("/analysis/trigger", response_model=AnalysisTriggerResponse)
 async def trigger_analysis(
     request: AnalysisTriggerRequest,
@@ -91,7 +97,16 @@ async def trigger_analysis(
     repo = db.scalar(select(Repository).where(Repository.user_id == current.user.id, Repository.owner == request.owner, Repository.name == request.name))
     has_overview = bool(repo and repo.status == AnalysisStatus.COMPLETED and repo.intelligence is not None)
     modules_current = bool(has_overview and repo.intelligence.module_analysis_sha == sha)
-    if repo and repo.commit_sha == sha and modules_current:
+    semantic_current = bool(
+        has_overview
+        and isinstance(repo.intelligence.structural_data_json, dict)
+        and repo.intelligence.structural_data_json.get("semantic_analysis_sha") == sha
+    )
+    if semantic_current:
+        expected_chunks = repo.intelligence.structural_data_json.get("semantic_chunk_count")
+        persisted_chunks = db.scalar(select(func.count()).select_from(RepositoryChunk).where(RepositoryChunk.repository_id == repo.id, RepositoryChunk.commit_sha == sha))
+        semantic_current = expected_chunks is not None and expected_chunks == persisted_chunks
+    if repo and repo.commit_sha == sha and modules_current and semantic_current:
         return AnalysisTriggerResponse(cached=True, repository_id=repo.id, commit_sha=sha, analyzed_at=repo.analyzed_at)
     pending = db.scalar(select(AnalysisJob).where(AnalysisJob.user_id == current.user.id, AnalysisJob.repository_id == repo.id if repo else False, AnalysisJob.commit_sha == sha, AnalysisJob.status.in_(["QUEUED", "RUNNING"]))) if repo else None
     if pending:
@@ -125,7 +140,7 @@ def analysis_status(analysis_id: UUID, db: Session = Depends(get_session), curre
     job = db.scalar(select(AnalysisJob).where(AnalysisJob.id == analysis_id, AnalysisJob.user_id == current.user.id))
     if not job:
         raise APIError(404, "analysis_not_found", "This analysis could not be found.")
-    done = [STAGE_LABELS[i] for i in (1, 2, 3, 4, 5, 8) if job.stage_index > i or (job.status == "COMPLETED" and job.stage_index >= i)]
+    done = [STAGE_LABELS[i] for i in (1, 2, 3, 4, 5, 6, 8) if job.stage_index > i or (job.status == "COMPLETED" and job.stage_index >= i)]
     failure = {"code": job.failure_code, "message": job.failure_message} if job.failure_code else None
     return AnalysisStatusResponse(analysis_id=job.id, repository_id=job.repository_id, status=job.status, stage=STAGE_LABELS.get(job.stage_index, "QUEUED"), stage_index=job.stage_index, progress=job.progress_percent, completed_stages=done, deferred_stages=DEFERRED, failure=failure)
 

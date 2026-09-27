@@ -20,6 +20,7 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
+.pytest-temp/
 .mypy_cache/
 .ruff_cache/
 htmlcov/
@@ -39,3 +40,6 @@ build/
 Thumbs.db
 .idea/
 .vscode/
+
+# Local project decision/context notes
+docs/RepoLens_Project_State_and_Decisions.txt

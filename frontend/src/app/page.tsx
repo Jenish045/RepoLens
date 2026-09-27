@@ -3,7 +3,44 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
-const previews = ["Repository Overview", "Semantic Explorer", "Repository Map", "Repository Insights", "Ask RepoLens", "Export Report"];
+const capabilities = [
+  {
+    name: "Repository Overview",
+    status: "Available",
+    available: true,
+    description: "Review repository metadata, supported-language parsing, entry points, technologies, and structural inventory.",
+  },
+  {
+    name: "Semantic Explorer",
+    status: "Available",
+    available: true,
+    description: "Search persisted source chunks with natural-language concepts and inspect their file and line provenance.",
+  },
+  {
+    name: "Repository Map",
+    status: "Available",
+    available: true,
+    description: "Explore deterministic modules and their import-derived dependencies in an interactive graph.",
+  },
+  {
+    name: "Repository Insights",
+    status: "Planned",
+    available: false,
+    description: "Structured observations about module distribution, dependencies, and repository organization.",
+  },
+  {
+    name: "Ask RepoLens",
+    status: "Planned",
+    available: false,
+    description: "Grounded conversational answers with citations to repository evidence.",
+  },
+  {
+    name: "Export Report",
+    status: "Planned",
+    available: false,
+    description: "Portable PDF and Markdown summaries of a completed repository analysis.",
+  },
+];
 const errors: Record<string,string> = { oauth_configuration_missing: "GitHub sign-in is not configured yet. Add the GitHub OAuth settings to the backend environment.", github_authorization_denied: "GitHub authorization was cancelled. You can try again when you are ready.", oauth_state_invalid: "The sign-in request expired or could not be verified. Please try again.", github_sign_in_failed: "GitHub sign-in could not be completed. Please try again.", database_migration_required: "RepoLens database setup is incomplete. Ask the project administrator to apply the latest database migrations.", session_storage_unavailable: "This browser could not store the RepoLens session. Check your browser storage settings and try again.", github_scope_required: "RepoLens needs profile and public repository access to continue." };
 
 export default function HomePage() {
@@ -20,7 +57,7 @@ export default function HomePage() {
       <div className="relative"><div className="absolute -inset-10 rounded-full bg-indigo-200/40 blur-3xl"/><div className="relative rounded-3xl border border-slate-200 bg-white p-5 shadow-xl shadow-slate-200/60 sm:p-7"><div className="mb-4 inline-flex rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-500">Illustrative product preview · sample content</div><div className="flex items-center justify-between border-b border-slate-100 pb-5"><div><p className="text-sm text-slate-500">Repository overview</p><p className="mt-1 font-semibold">acme / storefront</p></div><span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700">Analyzed</span></div><div className="mt-5 grid grid-cols-3 gap-3">{[["Language","TypeScript"],["Files","1,284"],["Size","8.4 MB"]].map(([a,b])=><div key={a} className="rounded-xl bg-slate-50 p-3"><p className="text-xs text-slate-500">{a}</p><p className="mt-2 text-sm font-semibold">{b}</p></div>)}</div><div className="mt-5 rounded-xl border border-slate-100 p-4"><p className="text-xs font-medium text-slate-500">TECHNOLOGIES</p><div className="mt-3 flex flex-wrap gap-2">{["React","Next.js","Tailwind CSS"].map(x=><span key={x} className="rounded-lg bg-indigo-50 px-2.5 py-1.5 text-xs font-medium text-indigo-700">{x}</span>)}</div></div><div className="mt-4 rounded-xl bg-slate-950 p-4 font-mono text-xs leading-6 text-slate-300"><span className="text-indigo-300">src/</span><br/>&nbsp; app/ &nbsp; <span className="text-slate-500">application routes</span><br/>&nbsp; components/ <span className="text-slate-500">reusable UI</span><br/>&nbsp; lib/ &nbsp;&nbsp;&nbsp; <span className="text-slate-500">shared utilities</span></div></div></div>
     </section>
     <section className="border-y border-slate-200 bg-white"><div className="mx-auto max-w-7xl px-6 py-10"><p className="text-xs font-semibold uppercase tracking-[.2em] text-slate-500">Supported languages</p><div className="mt-5 flex flex-wrap gap-3">{["Python","Java","JavaScript","TypeScript"].map(x=><span key={x} className="rounded-full border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700">{x}</span>)}</div></div></section>
-    <section className="mx-auto max-w-7xl px-6 py-16"><p className="text-xs font-semibold uppercase tracking-[.2em] text-indigo-700">One workspace for understanding</p><h2 className="mt-3 text-3xl font-semibold tracking-tight">From first look to deeper exploration</h2><div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{previews.map((x,i)=><div key={x} className="rounded-2xl border border-slate-200 bg-white p-5"><span className="text-sm font-semibold text-indigo-600">0{i+1}</span><h3 className="mt-4 font-semibold">{x}</h3><p className="mt-2 text-sm leading-6 text-slate-600">A focused way to make sense of your repository and its structure.</p></div>)}</div></section>
+    <section className="mx-auto max-w-7xl px-6 py-16"><p className="text-xs font-semibold uppercase tracking-[.2em] text-indigo-700">Repository understanding</p><h2 className="mt-3 text-3xl font-semibold tracking-tight">Explore what works today and what is planned</h2><div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{capabilities.map((capability,i)=><article key={capability.name} className="rounded-2xl border border-slate-200 bg-white p-5"><div className="flex items-center justify-between gap-3"><span className="text-sm font-semibold text-indigo-600">0{i+1}</span><span className={`rounded-full px-2.5 py-1 text-xs font-medium ${capability.available ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>{capability.status}</span></div><h3 className="mt-4 font-semibold">{capability.name}</h3><p className="mt-2 text-sm leading-6 text-slate-600">{capability.description}</p></article>)}</div></section>
     <footer className="mx-auto max-w-7xl border-t border-slate-200 px-6 py-7 text-sm text-slate-500">RepoLens · Understand software systems, not just source code.</footer>
   </main>;
 }

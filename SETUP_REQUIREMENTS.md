@@ -1,6 +1,6 @@
 # RepoLens setup requirements
 
-This guide covers Capabilities 1–2 — Repository Overview and Interactive Repository Map. Semantic Explorer, Insights, Ask RepoLens, and report export are later capabilities. Keep [RepoLens_Engineering_Specification.pdf](RepoLens_Engineering_Specification.pdf) as the normative architecture reference.
+This guide covers the current repository implementation: Repository Overview, Interactive Repository Map, and Semantic Explorer retrieval. Repository Insights, Ask RepoLens, report export, and the generated learning path remain deferred. Keep [RepoLens_Engineering_Specification.pdf](RepoLens_Engineering_Specification.pdf) as the normative architecture reference; see [the project-state record](docs/RepoLens_Project_State_and_Decisions.txt) for the implemented/deferred split.
 
 ## A. Required software
 
@@ -27,7 +27,7 @@ This guide covers Capabilities 1–2 — Repository Overview and Interactive Rep
 Required to run the current integration:
 
 - GitHub OAuth **Client ID** and **Client Secret**.
-- Gemini **API key** (later capability only; not needed now).
+- Gemini **API key** (specified for future generative workflows; not used by the current analysis/search path).
 - Neon PostgreSQL **connection string**.
 - Application **JWT signing secret**, generated locally for development and securely generated in each deployed environment.
 
@@ -43,7 +43,7 @@ The authoritative placeholders live in `backend/.env.example` and `frontend/.env
 | `GITHUB_CLIENT_ID` | Backend | OAuth application client ID | Yes, for live sign-in |
 | `GITHUB_CLIENT_SECRET` | Backend | OAuth application secret (server-side only) | Yes, for live sign-in |
 | `GITHUB_CALLBACK_URL` | Backend | Registered OAuth callback URL | Yes; local default is provided |
-| `GEMINI_API_KEY` | Backend | Gemini API credential | No; not used in Capability 1 |
+| `GEMINI_API_KEY` | Backend | Gemini API credential | No; the current pipeline does not call Gemini |
 | `JWT_SECRET` | Backend | Signs sessions and derives GitHub token encryption key | Yes |
 | `FRONTEND_URL` | Backend | Frontend origin used by backend configuration | Local CORS/configuration |
 | `BACKEND_URL` | Backend | Backend's externally reachable base URL | Local callback/link configuration |
@@ -61,16 +61,16 @@ The authoritative placeholders live in `backend/.env.example` and `frontend/.env
 4. Follow the backend and frontend instructions below.
 5. Configure Neon and apply Alembic migrations when working on database persistence.
 
-The foundation can import and start the backend without connecting to PostgreSQL. Database operations and migrations require a valid reachable `DATABASE_URL`.
+The backend process can start without connecting to PostgreSQL, but authenticated repository and analysis operations require a valid reachable `DATABASE_URL`.
 
 ## F. Database setup
 
 1. Create a Neon PostgreSQL project/database.
 2. Copy the pooled or direct connection string as appropriate for development, and use the SQLAlchemy `postgresql+psycopg://` driver form in `DATABASE_URL`.
 3. Run migrations from `backend/` with its virtual environment active: `alembic upgrade head`.
-4. For schema changes, generate/review migrations before applying them. PostgreSQL is the durable system of record. Future FAISS indexes are derived, disposable, and reconstructed from the stored 384-dimensional normalized vectors.
+4. For schema changes, generate/review migrations before applying them. PostgreSQL is the durable system of record. The current FAISS index is derived, disposable, and reconstructed from the stored 384-dimensional normalized vectors.
 
-The schema has `users`, `repositories`, `repository_intelligence`, `modules`, `repository_chunks`, and `reports`. Alembic migrations add OAuth credentials, Overview metadata, durable analysis status, module metadata, the module-analysis SHA marker, and saved Dagre positions. Module membership and inter-module relationships are stored as metadata; source files are not copied into PostgreSQL.
+The schema has `users`, `repositories`, `repository_intelligence`, `modules`, `repository_chunks`, `reports`, and `analysis_jobs`. Alembic migrations add OAuth credentials, Overview metadata, durable analysis status, module metadata, the module-analysis SHA marker, saved Dagre positions, and chunk commit/module/symbol provenance. Module membership and inter-module relationships are stored as metadata; cloned repository files are not copied into PostgreSQL, but selected semantic chunk text and embeddings are persisted.
 
 ## G. GitHub OAuth setup
 
@@ -88,7 +88,7 @@ Local callback example (replace if the route/port changes): `http://localhost:80
 
 ## H. Gemini setup
 
-Gemini 2.5 Flash is specified for future grounded intelligence and answers. Capability 1 does not call Gemini; no key is needed to run this flow. If configured later, keep it in backend `.env` only.
+Gemini 2.5 Flash is specified for future generated insights and grounded answers. The current analysis and semantic retrieval do not call Gemini; no key is needed for those flows. If configured later, keep it in backend `.env` only.
 
 ## I. Frontend setup
 
@@ -112,9 +112,9 @@ Copy-Item .env.example .env
 uvicorn app.main:app --reload
 ```
 
-On macOS/Linux, use `python3.12 -m venv .venv` and `source .venv/bin/activate`. The API exposes `GET /health`, OAuth, public repository listing, analysis trigger/status, and Overview endpoints. One FastAPI process handles API, database work, and analysis background tasks.
+On macOS/Linux, use `python3.12 -m venv .venv` and `source .venv/bin/activate`. The API exposes `GET /health`, OAuth, public repository listing, analysis trigger/status, Overview, Repository Map, and semantic retrieval endpoints. One FastAPI process handles API, database work, and analysis background tasks.
 
-Tree-sitter is used for deterministic metadata extraction. The broader project dependencies include sentence-transformers/BGE, faiss-cpu, Gemini, Jinja2, and WeasyPrint for later capabilities; those engines are not run in Capability 1. Git must be installed and available on the backend `PATH` for shallow cloning.
+Tree-sitter provides deterministic metadata extraction. The current semantic path uses sentence-transformers/BGE and faiss-cpu on CPU. Gemini, Jinja2, and WeasyPrint dependencies are retained for the specified generated-intelligence/report architecture, but those workflows are not implemented in the current application. Git must be installed and available on the backend `PATH` for shallow cloning.
 
 ## K. Testing
 
@@ -125,7 +125,7 @@ cd backend
 python -m pytest
 ```
 
-This suite covers settings, app import, `/health`, OAuth state, supported scope, parser and technology metadata, cache behavior, deterministic module membership, graph coupling and layout, and owner-scoped map access. Frontend checks are `npm run typecheck`, `npm run lint`, and `npm run build`. The live flow requires reachable PostgreSQL and valid GitHub OAuth credentials.
+This suite covers settings, app import, `/health`, OAuth state, supported scope, parser and technology metadata, cache behavior, deterministic module membership, graph coupling and layout, owner-scoped map access, Windows-safe clone subprocess behavior, and semantic chunking/embedding contracts. Frontend checks are `npm run typecheck`, `npm run lint`, and `npm run build`. The live flow requires reachable PostgreSQL and valid GitHub OAuth credentials.
 
 ## L. Future deployment requirements
 
