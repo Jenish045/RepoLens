@@ -1,23 +1,18 @@
+"use client";
+
 import Link from "next/link";
+import Image from "next/image";
+import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+import { ApiError, apiRequest, clearSession, type RepoCard, type RepoList } from "@/lib/api";
 
 export default function DashboardPage() {
-  return (
-    <div className="min-h-screen">
-      <header className="border-b bg-white">
-        <nav aria-label="Main navigation" className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
-          <Link className="text-lg font-semibold tracking-tight" href="/">RepoLens</Link>
-          <span className="rounded-full border px-3 py-1 text-xs font-medium text-slate-600">Project foundation</span>
-        </nav>
-      </header>
-      <main className="mx-auto max-w-6xl px-6 py-12">
-        <h1 className="text-2xl font-semibold tracking-tight">Dashboard shell</h1>
-        <section className="mt-8 rounded-lg border bg-white p-8" aria-label="Dashboard workspace foundation">
-          <p className="font-medium">Workspace foundation</p>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
-            Repository selection and intelligence views are not implemented at this stage.
-          </p>
-        </section>
-      </main>
-    </div>
-  );
+  const router = useRouter(); const [items,setItems]=useState<RepoCard[]>([]); const [loading,setLoading]=useState(true); const [error,setError]=useState(""); const [busy,setBusy]=useState(""); const [user,setUser]=useState<{username:string;avatar_url?:string}|null>(null); const [hasMore,setHasMore]=useState(false); const [page,setPage]=useState(1); const [loadingMore,setLoadingMore]=useState(false);
+  useEffect(()=>{const token=sessionStorage.getItem("repolens_session");if(!token){router.replace("/");return;}try{const p=JSON.parse(atob(token.split(".")[1].replace(/-/g,"+").replace(/_/g,"/")));setUser({username:p.username,avatar_url:p.avatar_url});}catch{clearSession();router.replace("/");return;} apiRequest<RepoList>("/repositories").then(r=>{setItems(r.data);setHasMore(r.meta.has_more);}).catch(e=>setError(e instanceof ApiError?e.message:"Could not load repositories.")).finally(()=>setLoading(false));},[router]);
+  async function loadMore(){setLoadingMore(true);setError("");try{const next=page+1;const result=await apiRequest<RepoList>(`/repositories?page=${next}`);setItems(current=>[...current,...result.data]);setPage(next);setHasMore(result.meta.has_more);}catch(e){setError(e instanceof ApiError?e.message:"Could not load more repositories.");}finally{setLoadingMore(false);}}
+  async function select(repo:RepoCard){setBusy(repo.full_name);setError("");try{const result=await apiRequest<{cached:boolean;repository_id:string|null;analysis_id:string|null}>("/analysis/trigger",{method:"POST",body:JSON.stringify({owner:repo.owner,name:repo.name})});router.push(result.cached&&result.repository_id?`/repositories/${result.repository_id}`:`/analysis/${result.analysis_id}`);}catch(e){setError(e instanceof ApiError?e.message:"Could not start repository analysis.");setBusy("");}}
+  function signOut(){clearSession();router.replace("/");}
+  return <main className="min-h-screen bg-slate-50"><header className="border-b bg-white"><nav className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6"><Link className="font-semibold" href="/">RepoLens</Link><div className="flex items-center gap-3">{user?.avatar_url&&<Image unoptimized src={user.avatar_url} alt="" width={32} height={32} className="size-8 rounded-full"/>}<span className="text-sm text-slate-600">{user?.username??""}</span><button onClick={signOut} className="rounded-lg border px-3 py-2 text-sm">Sign out</button></div></nav></header><section className="mx-auto max-w-6xl px-6 py-12"><p className="text-xs font-semibold uppercase tracking-[.2em] text-indigo-700">Repository workspace</p><h1 className="mt-2 text-3xl font-semibold tracking-tight">Choose a public repository</h1><p className="mt-3 max-w-2xl text-slate-600">RepoLens checks the latest commit and reuses an existing analysis when the repository has not changed.</p>
+    {error&&<p role="alert" className="mt-6 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{error}</p>}
+    {loading?<div role="status" className="mt-10 rounded-2xl border bg-white p-8 text-slate-600">Loading your public repositories…</div>:items.length===0?<div className="mt-10 rounded-2xl border bg-white p-8"><h2 className="font-semibold">No public repositories found</h2><p className="mt-2 text-sm text-slate-600">Repositories you own or can access publicly will appear here.</p></div>:<><div className="mt-8 grid gap-4 md:grid-cols-2">{items.map(repo=><article key={repo.id} className="flex flex-col rounded-2xl border border-slate-200 bg-white p-5"><div className="flex-1"><p className="text-xs text-slate-500">{repo.owner}</p><h2 className="mt-1 text-lg font-semibold">{repo.name}</h2><p className="mt-2 min-h-10 text-sm leading-5 text-slate-600">{repo.description||"No description provided."}</p><div className="mt-4 flex flex-wrap gap-2 text-xs text-slate-600">{repo.primary_language&&<span className="rounded-full bg-indigo-50 px-3 py-1 text-indigo-700">{repo.primary_language}</span>}<span className="rounded-full bg-slate-100 px-3 py-1">{repo.size_kb.toLocaleString()} KB</span>{repo.updated_at&&<span className="rounded-full bg-slate-100 px-3 py-1">Updated {new Date(repo.updated_at).toLocaleDateString()}</span>}</div></div><button disabled={!!busy} onClick={()=>select(repo)} className="mt-5 h-10 rounded-lg bg-slate-950 px-4 text-sm font-medium text-white disabled:opacity-50">{busy===repo.full_name?"Checking latest commit…":"Analyze repository"}</button></article>)}</div>{hasMore&&<div className="mt-7 text-center"><button onClick={loadMore} disabled={loadingMore} className="rounded-lg border bg-white px-5 py-3 text-sm font-medium disabled:opacity-50">{loadingMore?"Loading more…":"Load more repositories"}</button></div>}</>}</section></main>;
 }
